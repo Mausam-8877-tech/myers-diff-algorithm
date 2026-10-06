@@ -115,6 +115,78 @@ def myers_diff(a, b):
     return edits
 
 
+def add_position(ranges, pos):
+    # Add one highlighted position; merge with the last range if they touch
+    if ranges and ranges[-1][1] == pos:
+        ranges[-1][1] = pos + 1
+    else:
+        ranges.append([pos, pos + 1])
+
+
+def format_ranges(ranges):
+    # [[3, 6], [9, 10]] -> "3-6,9-10";  [] -> "."
+    if not ranges:
+        return "."
+    return ",".join(f"{start}-{end}" for start, end in ranges)
+
+
+def char_ranges(old_line, new_line):
+    # Part B: Myers again, on the characters (code points) of one line pair
+    old = old_line.decode("utf-8")
+    new = new_line.decode("utf-8")
+    edits = myers_diff(list(old), list(new))
+
+    old_ranges = []
+    new_ranges = []
+    i = 0   # position in old line
+    j = 0   # position in new line
+    for op, _ in edits:
+        if op == b" ":          # same character in both
+            i += 1
+            j += 1
+        elif op == b"-":        # only in old line -> highlight in old
+            add_position(old_ranges, i)
+            i += 1
+        else:                   # only in new line -> highlight in new
+            add_position(new_ranges, j)
+            j += 1
+    return format_ranges(old_ranges), format_ranges(new_ranges)
+
+
+def build_output(edits, highlight):
+    out = []
+    i = 0
+    while i < len(edits):
+        op, line = edits[i]
+        if op == b" ":
+            out.append(b" " + line + b"\n")
+            i += 1
+            continue
+
+        # Collect one change block: consecutive '-' and '+' lines
+        dels = []
+        ins = []
+        while i < len(edits) and edits[i][0] != b" ":
+            if edits[i][0] == b"-":
+                dels.append(edits[i][1])
+            else:
+                ins.append(edits[i][1])
+            i += 1
+
+        # Delete-first rule: all '-' lines, then all '+' lines
+        for d_line in dels:
+            out.append(b"-" + d_line + b"\n")
+        for idx, i_line in enumerate(ins):
+            out.append(b"+" + i_line + b"\n")
+            # Pair the idx-th '+' with the idx-th '-' (if it exists)
+            if highlight and idx < len(dels):
+                old_r, new_r = char_ranges(dels[idx], i_line)
+                out.append(f"? {old_r} | {new_r}\n".encode())
+
+    return b"".join(out)
+
+
+
 
 def main() -> int:
     if len(sys.argv) != 4 or sys.argv[1] not in ("lines", "highlight"):
@@ -133,12 +205,7 @@ def main() -> int:
 
     # Temporary check (will be removed in Step 7): show line counts on stderr
     edits = myers_diff(a, b)
-
-    # Write bytes directly (keeps \r and non-UTF-8 bytes exactly)
-    out = []
-    for op, line in edits:
-        out.append(op + line + b"\n")
-    sys.stdout.buffer.write(b"".join(out))
+    sys.stdout.buffer.write(build_output(edits, command == "highlight"))
     return 0
 
 
